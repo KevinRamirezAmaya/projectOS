@@ -4,12 +4,12 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <sys/wait.h>
 
 #define PORT 9001
 #define BUFFER_SIZE 1024
 
 int main() {
-    // Declaración de variables principales del servidor
     int servSockD, clientSockD;
     struct sockaddr_in servAddr;
     char buffer[BUFFER_SIZE];
@@ -22,9 +22,9 @@ int main() {
     }
 
     // Configurar la dirección del servidor
-    servAddr.sin_family = AF_INET; // Familia de direcciones IPv4
-    servAddr.sin_addr.s_addr = INADDR_ANY; // Escuchar en cualquier interfaz
-    servAddr.sin_port = htons(PORT); // Puerto del servidor
+    servAddr.sin_family = AF_INET;
+    servAddr.sin_addr.s_addr = INADDR_ANY;
+    servAddr.sin_port = htons(PORT);
 
     // Asociar el socket a la dirección y puerto configurados
     if (bind(servSockD, (struct sockaddr*)&servAddr, sizeof(servAddr)) < 0) {
@@ -54,8 +54,8 @@ int main() {
 
     // Bucle para recibir y procesar comandos
     while (1) {
-        memset(buffer, 0, BUFFER_SIZE); // Limpiar el buffer
-        int bytesReceived = recv(clientSockD, buffer, BUFFER_SIZE, 0); // Recibir comando
+        memset(buffer, 0, BUFFER_SIZE);
+        int bytesReceived = recv(clientSockD, buffer, BUFFER_SIZE, 0);
         if (bytesReceived <= 0) {
             printf("Cliente desconectado.\n");
             break;
@@ -69,21 +69,36 @@ int main() {
 
         printf("Comando recibido: %s", buffer);
 
-        // Ejecutar el comando recibido usando popen
-        FILE *fp = popen(buffer, "r");
-        if (fp == NULL) {
-            perror("Error ejecutando el comando");
-            send(clientSockD, "Error ejecutando el comando\n", 26, 0);
-            continue;
+        // Crear un proceso hijo para manejar el comando
+        pid_t pid = fork();
+        if (pid == 0) {
+            // Código del proceso hijo
+            printf("Proceso hijo creado. PID: %d\n", getpid()); // Mensaje de depuración
+            FILE *fp = popen(buffer, "r");
+            if (fp == NULL) {
+                perror("Error ejecutando el comando");
+                send(clientSockD, "Error ejecutando el comando\n", 26, 0);
+                exit(EXIT_FAILURE);
+            }
+
+            // Capturar la salida del comando
+            char result[BUFFER_SIZE] = {0};
+            fread(result, sizeof(char), BUFFER_SIZE, fp);
+            pclose(fp);
+
+            // Enviar la salida al cliente
+            send(clientSockD, result, strlen(result), 0);
+
+            // Terminar el proceso hijo
+            printf("Proceso hijo PID %d finalizado.\n", getpid()); // Mensaje de depuración
+            exit(0);
+        } else if (pid > 0) {
+            // Código del proceso padre: esperar al hijo
+            printf("Proceso padre esperando al hijo con PID: %d\n", pid); // Mensaje de depuración
+            wait(NULL);
+        } else {
+            perror("Error al crear el proceso hijo");
         }
-
-        // Capturar la salida del comando
-        char result[BUFFER_SIZE] = {0};
-        fread(result, sizeof(char), BUFFER_SIZE, fp);
-        pclose(fp);
-
-        // Enviar la salida al cliente
-        send(clientSockD, result, strlen(result), 0);
     }
 
     // Cerrar sockets
